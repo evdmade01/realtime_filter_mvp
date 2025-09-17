@@ -1,0 +1,6 @@
+pyqt6==6.*
+pyqt6-plugins
+pyqtgraph
+numpy
+scipy
+pyinstaller
