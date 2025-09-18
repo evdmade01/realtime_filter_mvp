@@ -9,8 +9,10 @@ env/
 
 # PyInstaller
 build/
-dist/
 *.spec
+
+# Large executable files (>100MB)
+src/dist/RealtimeFilterMVP.exe
 
 # OS
 .DS_Store
