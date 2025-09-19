@@ -403,15 +403,12 @@ class EducationalFilterView(QtWidgets.QMainWindow):
         self.magnitude_curve.setData(frequencies, magnitude_db)
         self.phase_curve.setData(frequencies, phase_deg)
         
-        # Add -3dB line and cutoff frequency marker
-        self.magnitude_plot.clear()
-        self.magnitude_curve = self.magnitude_plot.plot(frequencies, magnitude_db, 
-                                                       pen=pg.mkPen('green', width=3))
-        
-        # Add -3dB reference line
-        db3_line = pg.InfiniteLine(pos=-3, angle=0, 
-                                  pen=pg.mkPen('red', width=1, style=QtCore.Qt.PenStyle.DashLine))
-        self.magnitude_plot.addItem(db3_line)
+        # Only add -3dB line if it doesn't exist
+        if not hasattr(self, '_db3_line_added'):
+            db3_line = pg.InfiniteLine(pos=-3, angle=0, 
+                                      pen=pg.mkPen('red', width=1, style=QtCore.Qt.PenStyle.DashLine))
+            self.magnitude_plot.addItem(db3_line)
+            self._db3_line_added = True
     
     def update_step_response(self, time_ms: np.ndarray, step_response: np.ndarray):
         """Update step response plot"""
@@ -515,38 +512,62 @@ class EducationalController:
         self.view.update_step_response(time_step_ms, step_response)
     
     def update_analysis(self):
-        """Real-time analysis update"""
-        # Generate input signal
-        input_signal = self.signal_generator.generate_signal()
-        time_ms = self.signal_generator.t * 1000
-        
-        # Apply filter
-        num, den = self.filter_model.transfer_function_coefficients()
-        output_signal = signal.lfilter(num, den, input_signal)
-        
-        # Update time domain plots
-        self.view.update_time_plots(time_ms, input_signal, output_signal)
-        
-        # Update spectrum analysis
-        frequencies = np.fft.rfftfreq(len(input_signal), 1/self.signal_generator.sample_rate)
-        input_fft = np.fft.rfft(input_signal)
-        output_fft = np.fft.rfft(output_signal)
-        
-        input_spectrum_db = 20 * np.log10(np.abs(input_fft) + 1e-12)
-        output_spectrum_db = 20 * np.log10(np.abs(output_fft) + 1e-12)
-        
-        self.view.update_spectrum(frequencies, input_spectrum_db, output_spectrum_db)
+        """Real-time analysis update with error handling"""
+        try:
+            # Generate input signal
+            input_signal = self.signal_generator.generate_signal()
+            time_ms = self.signal_generator.t * 1000
+            
+            # Apply filter
+            num, den = self.filter_model.transfer_function_coefficients()
+            output_signal = signal.lfilter(num, den, input_signal)
+            
+            # Update time domain plots
+            self.view.update_time_plots(time_ms, input_signal, output_signal)
+            
+            # Update spectrum analysis (less frequently to improve performance)
+            if not hasattr(self, '_spectrum_counter'):
+                self._spectrum_counter = 0
+            
+            self._spectrum_counter += 1
+            if self._spectrum_counter % 4 == 0:  # Update spectrum every 4th frame (5fps instead of 20fps)
+                frequencies = np.fft.rfftfreq(len(input_signal), 1/self.signal_generator.sample_rate)
+                input_fft = np.fft.rfft(input_signal)
+                output_fft = np.fft.rfft(output_signal)
+                
+                input_spectrum_db = 20 * np.log10(np.abs(input_fft) + 1e-12)
+                output_spectrum_db = 20 * np.log10(np.abs(output_fft) + 1e-12)
+                
+                self.view.update_spectrum(frequencies, input_spectrum_db, output_spectrum_db)
+                
+        except Exception as e:
+            print(f"Error in update_analysis: {e}")
+            self.timer.stop()
+            self.view.start_button.setChecked(False)
+            self.view.start_button.setText("Start Analysis")
+            self.view.status_bar.showMessage(f"Analysis stopped due to error: {str(e)}")
     
     def toggle_analysis(self, checked: bool):
         """Start/stop real-time analysis"""
         if checked:
-            self.timer.start(50)  # 20 fps
-            self.view.start_button.setText("Stop Analysis")
-            self.view.status_bar.showMessage("Real-time analysis running...")
+            try:
+                # Reset spectrum counter
+                self._spectrum_counter = 0
+                
+                # Start with slower refresh rate to prevent hanging
+                self.timer.start(100)  # 10 fps instead of 20 fps
+                self.view.start_button.setText("Stop Analysis")
+                self.view.status_bar.showMessage("Real-time analysis running...")
+                print("Analysis started successfully")  # Debug output
+            except Exception as e:
+                print(f"Error starting analysis: {e}")
+                self.view.start_button.setChecked(False)
+                self.view.status_bar.showMessage(f"Failed to start analysis: {str(e)}")
         else:
             self.timer.stop()
             self.view.start_button.setText("Start Analysis")
             self.view.status_bar.showMessage("Analysis stopped")
+            print("Analysis stopped")  # Debug output
     
     def reset_analysis(self):
         """Reset to default parameters"""
